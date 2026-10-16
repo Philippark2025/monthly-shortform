@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>월간 실적 숏폼</title>
+<meta name="description" content="제목·숫자 3개·강조색·마무리 문장을 넣으면 9:16 15초 실적 모션그래픽을 바로 만들어 주는 도구">
+<!-- 월간 실적 숏폼 메이커 · 9:16(1080×1920) · 15초
+     장면: 제목(0~2.9초) → 숫자 3개 카운트 업(2.9~9초) → 막대 그래프(8.8~12.5초) → 마무리 문장(12.4~15초)
+     입력값은 localStorage에 자동 저장. 렌더: window.DURATION(초), window.setT(t)(t초 화면, 미리보기만 크게 보기 상태로 전환) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<style>
+  :root {
+    --ui-bg: #111217; --ui-panel: #181a21; --ui-field: #20232c; --ui-line: #2c303b;
+    --ui-ink: #f2f3f6; --ui-muted: #8d93a3; --ui-focus: #6f8bff;
+    --accent: #ff6b3d; --on-accent: #111;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { background: var(--ui-bg); color: var(--ui-ink); font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; }
+  button, input, textarea { font: inherit; color: inherit; }
+
+  /* ── 작업 화면: 왼쪽 입력 / 오른쪽 미리보기 ── */
+  .app { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; height: 100%; }
+  .panel { background: var(--ui-panel); border-right: 1px solid var(--ui-line); overflow-y: auto; padding: 28px 24px 32px; }
+  .panel h1 { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
+  .panel .lead { font-size: 13px; color: var(--ui-muted); margin: 6px 0 22px; line-height: 1.5; }
+  .field { margin-bottom: 20px; }
+  .field > label, .field > .lab { display: block; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  .hint { font-weight: 500; color: var(--ui-muted); font-size: 12px; margin-left: 6px; }
+  input[type=text], textarea {
+    width: 100%; background: var(--ui-field); border: 1px solid var(--ui-line); border-radius: 10px;
+    padding: 11px 12px; font-size: 15px; outline: none; transition: border-color .15s;
+  }
+  input[type=text]:focus, textarea:focus { border-color: var(--ui-focus); }
+  textarea { resize: vertical; min-height: 64px; line-height: 1.45; }
+  .row { display: grid; grid-template-columns: 24px 1fr 108px 64px; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .row .no { font-size: 12px; font-weight: 800; color: var(--accent); text-align: center; }
+  .row input { padding: 10px 10px; font-size: 14px; }
+  .row input.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .cols { display: grid; grid-template-columns: 24px 1fr 108px 64px; gap: 6px; font-size: 11px; color: var(--ui-muted); margin-bottom: 4px; }
+  .cols span:nth-child(3) { text-align: right; padding-right: 10px; }
+  .colors { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sw { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; outline-offset: 2px; }
+  .sw.on { border-color: #fff; }
+  .picker { position: relative; width: 30px; height: 30px; border-radius: 50%; overflow: hidden; border: 2px dashed var(--ui-muted); cursor: pointer; }
+  .picker input { position: absolute; inset: -8px; width: 46px; height: 46px; border: 0; cursor: pointer; opacity: 0; }
+  .picker::after { content: '+'; position: absolute; inset: 0; display: grid; place-items: center; font-size: 16px; color: var(--ui-muted); pointer-events: none; }
+  .hex { font-size: 13px; color: var(--ui-muted); font-variant-numeric: tabular-nums; margin-left: 4px; }
+  .actions { display: grid; gap: 8px; margin-top: 26px; }
+  .btn { border: 0; border-radius: 12px; padding: 14px 16px; font-size: 15px; font-weight: 800; cursor: pointer; transition: transform .1s, filter .15s; }
+  .btn:active { transform: scale(.98); }
+  .btn.primary { background: var(--accent); color: var(--on-accent); }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.ghost { background: var(--ui-field); border: 1px solid var(--ui-line); }
+  .btn.ghost:hover { border-color: var(--ui-muted); }
+  .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; font-size: 12px; color: var(--ui-muted); }
+  .link { background: none; border: 0; color: var(--ui-muted); text-decoration: underline; cursor: pointer; font-size: 12px; }
+  .saved { transition: opacity .3s; }
+
+  .previewCol { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 24px; gap: 14px; }
+  .viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  .scrub { display: flex; align-items: center; gap: 12px; max-width: 520px; width: 100%; margin: 0 auto; }
+  .scrub input { flex: 1; accent-color: var(--accent); }
+  .scrub .time { font-size: 13px; color: var(--ui-muted); font-variant-numeric: tabular-nums; min-width: 86px; text-align: right; }
+  .miniPlay { background: var(--ui-field); border: 1px solid var(--ui-line); border-radius: 999px; width: 34px; height: 34px; cursor: pointer; font-size: 12px; }
+
+  @media (max-width: 820px) {
+    .app { grid-template-columns: 1fr; height: auto; }
+    .panel { border-right: 0; border-bottom: 1px solid var(--ui-line); padding: 22px 16px 26px; }
+    .previewCol { padding: 16px; }
+    .viewport { flex: none; height: 78vh; }
+    .row, .cols { grid-template-columns: 20px 1fr 92px 56px; }
+  }
+
+  /* ── 미리보기만 크게 보기(녹화용) ── */
+  body.big { background: #000; overflow: hidden; }
+  body.big .panel, body.big .scrub { display: none; }
+  body.big .app { display: block; }
+  body.big .previewCol { position: fixed; inset: 0; padding: 0; background: #000; }
+  body.big .viewport { height: 100%; }
+  body.big.idle, body.big.idle * { cursor: none !important; }
+  .bigbar {
+    display: none; position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10;
+    gap: 8px; padding: 8px; background: rgba(20,22,28,.86); border: 1px solid #333; border-radius: 999px;
+    backdrop-filter: blur(8px); transition: opacity .3s;
+  }
+  body.big .bigbar { display: flex; }
+  body.big.idle .bigbar, body.big.playing .bigbar, body.rec .bigbar { opacity: 0; pointer-events: none; }
+  .bigbar button { border: 0; border-radius: 999px; padding: 10px 18px; font-size: 14px; font-weight: 700; cursor: pointer; background: #2a2d36; color: #fff; }
+  .bigbar button.go { background: var(--accent); color: var(--on-accent); }
+
+  /* ── 무대 1080×1920 (화면에 맞춰 축소) ── */
+  #stage {
+    position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; transform-origin: 0 0; overflow: hidden;
+    background: #0b0c10; color: #fff; border-radius: 28px; box-shadow: 0 30px 80px rgba(0,0,0,.45);
+    font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  }
+  body.big #stage { border-radius: 0; box-shadow: none; }
+  .ab { position: absolute; will-change: transform, opacity; }
+  #glowA { left: 540px; top: -620px; width: 1500px; height: 1500px; border-radius: 50%; }
+  #glowB { left: 760px; top: 1300px; width: 1100px; height: 1100px; border-radius: 50%; }
+
+  #head { left: 540px; top: 880px; width: 940px; text-align: center; }
+  #tag { display: inline-block; font-size: 34px; font-weight: 800; letter-spacing: .14em; padding: 14px 30px; border-radius: 999px;
+    background: var(--accent); color: var(--on-accent); margin-bottom: 40px; }
+  #title { font-size: 118px; font-weight: 800; line-height: 1.12; letter-spacing: -0.035em; word-break: keep-all; }
+  #title .w, #closing .w { display: inline-block; }
+  #line { width: 170px; height: 12px; border-radius: 6px; background: var(--accent); margin: 46px auto 0; transform-origin: center; }
+
+  .stat { left: 80px; width: 920px; height: 318px; border-radius: 44px; background: rgba(255,255,255,.055);
+    border: 2px solid rgba(255,255,255,.07); padding: 0 60px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+  .stat .edge { position: absolute; left: 0; top: 0; bottom: 0; width: 14px; background: var(--accent); transform-origin: top; }
+  .stat .top { display: flex; align-items: baseline; gap: 22px; font-size: 48px; line-height: 1.2; }
+  .stat .idx { font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .stat .name { font-weight: 600; color: #b9bdc9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat .val { display: flex; align-items: baseline; white-space: nowrap; font-size: 150px; line-height: 1.12; margin-top: 6px; }
+  .num { font-weight: 800; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .unit { font-size: .38em; font-weight: 700; margin-left: .14em; color: #d9dce4; }
+
+  #chart { inset: 0; }
+  #base { left: 100px; top: 1580px; width: 880px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.35); transform-origin: left; }
+  .col { top: 0; height: 1580px; width: 270px; }
+  .col .fill { position: absolute; left: 35px; bottom: 0; width: 200px; border-radius: 26px 26px 6px 6px; }
+  .col .bval { position: absolute; left: 0; width: 270px; text-align: center; white-space: nowrap; font-size: 66px; line-height: 1;
+    display: flex; justify-content: center; align-items: baseline; }
+  .col .bname { position: absolute; left: -10px; width: 290px; top: calc(100% + 30px); text-align: center; font-size: 42px; font-weight: 600;
+    color: #c6cad4; line-height: 1.25; word-break: keep-all; }
+  .col .best { position: absolute; left: 50%; font-size: 30px; font-weight: 800; letter-spacing: .12em; padding: 10px 22px; border-radius: 999px;
+    background: var(--accent); color: var(--on-accent); white-space: nowrap; }
+
+  .ring { left: 540px; top: 900px; width: 820px; height: 820px; border-radius: 50%; border: 6px solid var(--accent); }
+  #outro { left: 540px; top: 900px; width: 920px; text-align: center; }
+  #closing { font-size: 100px; font-weight: 800; line-height: 1.22; letter-spacing: -0.035em; word-break: keep-all; }
+  #closing .hl { color: var(--accent); }
+  #sign { margin-top: 60px; font-size: 40px; font-weight: 600; color: #9ca1ae; display: inline-flex; align-items: center; gap: 16px; }
+  #sign::before { content: ''; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel">
+    <h1>월간 실적 숏폼</h1>
+    <p class="lead">값을 바꾸면 오른쪽 미리보기에 바로 반영돼요. 입력값은 이 브라우저에 자동 저장됩니다.</p>
+
+    <div class="field">
+      <label for="fTitle">제목</label>
+      <input type="text" id="fTitle" maxlength="40" data-jump="2.0">
+    </div>
+
+    <div class="field">
+      <div class="lab">실적 3개 <span class="hint">쉼표·소수점 그대로 입력 OK</span></div>
+      <div class="cols"><span></span><span>이름</span><span>숫자</span><span>단위</span></div>
+      <div id="rows"></div>
+    </div>
+
+    <div class="field">
+      <div class="lab">강조색</div>
+      <div class="colors" id="colors">
+        <label class="picker" title="직접 고르기"><input type="color" id="fColor"></label>
+        <span class="hex" id="hex"></span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="fClosing">마무리 문장 <span class="hint">마지막 단어가 강조색으로 나와요</span></label>
+      <textarea id="fClosing" maxlength="60" data-jump="14.6"></textarea>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" id="playBtn">▶ 재생</button>
+      <button class="btn ghost" id="bigBtn">⛶ 미리보기만 크게 보기</button>
+    </div>
+    <div class="foot">
+      <span class="saved" id="saved">저장됨</span>
+      <button class="link" id="resetBtn">예시값으로 되돌리기</button>
+    </div>
+  </aside>
+
+  <main class="previewCol">
+    <div class="viewport" id="viewport">
+      <div id="stage">
+        <div class="ab" id="glowA"></div>
+        <div class="ab" id="glowB"></div>
+
+        <div class="ab" id="head">
+          <div id="tag">MONTHLY REPORT</div>
+          <div id="title"></div>
+          <div id="line"></div>
+        </div>
+
+        <div id="stats"></div>
+
+        <div class="ab" id="chart">
+          <div class="ab" id="base"></div>
+        </div>
+
+        <div class="ab ring" id="ring1"></div>
+        <div class="ab ring" id="ring2"></div>
+        <div class="ab" id="outro">
+          <div id="closing"></div>
+          <div id="sign"></div>
+        </div>
+      </div>
+    </div>
+    <div class="scrub">
+      <button class="miniPlay" id="miniPlay" title="재생">▶</button>
+      <input type="range" id="scrub" min="0" max="15" step="0.01" value="0" aria-label="재생 위치">
+      <span class="time" id="time">0.0 / 15.0초</span>
+    </div>
+  </main>
+</div>
+
+<div class="bigbar" id="bigbar">
+  <button class="go" id="bigPlay">▶ 재생 (Space)</button>
+  <button id="bigExit">나가기 (Esc)</button>
+</div>
+
+<script>
+  // ── 기본값 · 저장 ──
+  const DURATION = 15;
+  const KEY = 'monthly-shortform-v1';
+  const SWATCHES = ['#ff6b3d', '#ff3d71', '#facc15', '#22c55e', '#3d7bff', '#a855f7'];
+  const DEFAULTS = {
+    title: '10월 실적 리포트',
+    items: [
+      { name: '신규 고객', value: '1,284', unit: '명' },
+      { name: '월 매출', value: '3.2', unit: '억원' },
+      { name: '재구매율', value: '68', unit: '%' },
+    ],
+    accent: '#ff6b3d',
+    closing: '11월에도 함께 달려요!',
+  };
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+
+  function load() {
+    try {
+      const s = JSON.parse(localStorage.getItem(KEY));
+      if (s && Array.isArray(s.items) && s.items.length === 3) return { ...clone(DEFAULTS), ...s };
+    } catch (e) {}
+    return clone(DEFAULTS);
+  }
+  let state = load();
+  let savedTimer = null;
+  function save() {
+    const el = document.getElementById('saved');
+    try { localStorage.setItem(KEY, JSON.stringify(state)); el.textContent = '저장됨'; }
+    catch (e) { el.textContent = '이 브라우저에서는 저장이 안 돼요'; }
+    el.style.opacity = 1; clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => (el.style.opacity = .5), 900);
+  }
+
+  // ── 숫자 · 색 도우미 ──
+  function parseNum(str) {
+    const s = String(str).replace(/[^\d.\-]/g, '');
+    const v = parseFloat(s);
+    const d = Math.min(2, (s.split('.')[1] || '').length);
+    return { v: isFinite(v) ? v : 0, d };
+  }
+  const fmt = (v, d) => v.toLocaleString('ko-KR', { minimumFractionDigits: d, maximumFractionDigits: d });
+  function rgb(hex) {
+    const h = hex.replace('#', '');
+    const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const rgba = (hex, a) => `rgba(${rgb(hex).join(',')},${a})`;
+  function onAccent(hex) {
+    const [r, g, b] = rgb(hex).map((c) => { c /= 255; return c <= .03928 ? c / 12.92 : Math.pow((c + .055) / 1.055, 2.4); });
+    return .2126 * r + .7152 * g + .0722 * b > .32 ? '#111' : '#fff';
+  }
+
+  // ── 시간 곡선 ──
+  const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+  const seg = (t, a, b) => clamp((t - a) / (b - a));
+  const lerp = (a, b, p) => a + (b - a) * p;
+  const eOut = (x) => 1 - Math.pow(1 - x, 3);
+  const eOut4 = (x) => 1 - Math.pow(1 - x, 4);
+  const eInOut = (x) => (x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+  const eBack = (x) => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+
+  // ── 무대 요소 만들기 ──
+  const $ = (id) => document.getElementById(id);
+  const stage = $('stage'), viewport = $('viewport');
+  const head = $('head'), tag = $('tag'), titleEl = $('title'), line = $('line');
+  const chart = $('chart'), base = $('base'), ring1 = $('ring1'), ring2 = $('ring2');
+  const outro = $('outro'), closing = $('closing'), sign = $('sign');
+  const glowA = $('glowA'), glowB = $('glowB');
+
+  const stats = [0, 1, 2].map((i) => {
+    const el = document.createElement('div');
+    el.className = 'ab stat';
+    el.style.top = 520 + i * 360 + 'px';
+    el.innerHTML = `<div class="edge"></div><div class="top"><span class="idx">0${i + 1}</span><span class="name"></span></div>
+      <div class="val"><span class="num"></span><span class="unit"></span></div>`;
+    $('stats').appendChild(el);
+    return { el, edge: el.querySelector('.edge'), name: el.querySelector('.name'), val: el.querySelector('.val'),
+      num: el.querySelector('.num'), unit: el.querySelector('.unit') };
+  });
+  const cols = [0, 1, 2].map((i) => {
+    const el = document.createElement('div');
+    el.className = 'ab col';
+    el.style.left = 540 + (i - 1) * 300 - 135 + 'px';
+    el.innerHTML = `<div class="fill"></div><div class="bval"><span class="num"></span><span class="unit"></span></div>
+      <div class="best">TOP</div><div class="bname"></div>`;
+    chart.appendChild(el);
+    return { el, fill: el.querySelector('.fill'), bval: el.querySelector('.bval'), num: el.querySelector('.num'),
+      unit: el.querySelector('.unit'), best: el.querySelector('.best'), name: el.querySelector('.bname') };
+  });
+
+  function wordsInto(el, text, highlightLast) {
+    el.textContent = '';
+    const out = [];
+    const lines = String(text).trim().split(/\n+/);
+    lines.forEach((ln, li) => {
+      if (li) el.appendChild(document.createElement('br'));
+      ln.trim().split(/\s+/).filter(Boolean).forEach((w, wi) => {
+        if (wi) el.appendChild(document.createTextNode(' '));
+        const s = document.createElement('span');
+        s.className = 'w'; s.textContent = w;
+        el.appendChild(s); out.push(s);
+      });
+    });
+    if (highlightLast && out.length > 1) out[out.length - 1].classList.add('hl');
+    return out;
+  }
+  // 너비에 맞춰 글자 크기 줄이기(가장 큰 값 기준으로 한 번만 잼)
+  function fitWidth(el, maxPx, maxW) {
+    el.style.fontSize = maxPx + 'px';
+    const w = el.scrollWidth;
+    if (w > maxW) el.style.fontSize = Math.floor(maxPx * maxW / w) + 'px';
+  }
+  function fitLines(el, maxPx, minPx, lines) {
+    let px = maxPx;
+    el.style.fontSize = px + 'px';
+    while (px > minPx && el.scrollHeight > px * 1.25 * lines + 4) { px -= 4; el.style.fontSize = px + 'px'; }
+  }
+
+  // ── 입력값 → 무대 ──
+  let D = null, titleWords = [], closingWords = [];
+  function apply() {
+    const A = /^#[0-9a-f]{6}$/i.test(state.accent) ? state.accent : DEFAULTS.accent;
+    const root = document.documentElement.style;
+    root.setProperty('--accent', A);
+    root.setProperty('--on-accent', onAccent(A));
+    glowA.style.background = `radial-gradient(circle, ${rgba(A, .34)} 0%, ${rgba(A, .1)} 38%, ${rgba(A, 0)} 68%)`;
+    glowB.style.background = `radial-gradient(circle, ${rgba(A, .2)} 0%, ${rgba(A, 0)} 65%)`;
+
+    titleWords = wordsInto(titleEl, state.title || ' ', false);
+    fitLines(titleEl, 118, 72, 2);
+    closingWords = wordsInto(closing, state.closing || ' ', true);
+    fitLines(closing, 100, 60, 3);
+    sign.textContent = state.title;
+
+    const items = state.items.map((it) => ({ ...parseNum(it.value), name: it.name, unit: it.unit }));
+    const max = Math.max(...items.map((it) => it.v), 0);
+    const bestI = max > 0 ? items.findIndex((it) => it.v === max) : -1;
+    items.forEach((it, i) => {
+      const s = stats[i], c = cols[i];
+      s.name.textContent = it.name; s.unit.textContent = it.unit;
+      s.num.textContent = fmt(it.v, it.d); fitWidth(s.val, 150, 800);
+      c.name.textContent = it.name; c.unit.textContent = it.unit;
+      c.num.textContent = fmt(it.v, it.d); fitWidth(c.bval, 66, 280);
+      it.h = max > 0 ? Math.max(24, (Math.max(0, it.v) / max) * 760) : 24;
+      it.labelH = c.bval.offsetHeight;
+      c.fill.style.background = i === bestI ? A : 'rgba(255,255,255,.2)';
+      c.num.style.color = i === bestI ? A : '#fff';
+    });
+    D = { A, items, bestI };
+    render(curT);
+  }
+
+  // ── t초 화면 그리기 ──
+  let curT = 0;
+  function render(t) {
+    curT = t;
+    if (!D) return;
+    const A = D.A;
+
+    glowA.style.transform = `translate(-50%,0) translate(${Math.sin(t * .45) * 70}px, ${Math.cos(t * .35) * 50}px)`;
+    glowB.style.transform = `translate(-50%,0) translate(${Math.cos(t * .4) * 60}px, ${Math.sin(t * .3) * 60}px)`;
+
+    // 1) 제목 — 등장 후 위로 올라가 머리글이 됨
+    const pTag = eOut(seg(t, .2, .7));
+    tag.style.opacity = pTag;
+    tag.style.transform = `translateY(${(1 - pTag) * 30}px)`;
+    titleWords.forEach((w, i) => {
+      const a = .4 + Math.min(i, 8) * .08, p = eOut(seg(t, a, a + .55));
+      w.style.opacity = p; w.style.transform = `translateY(${(1 - p) * 70}px)`;
+    });
+    line.style.transform = `scaleX(${eInOut(seg(t, .9, 1.6))})`;
+    const pUp = eInOut(seg(t, 2.2, 2.9)), pHeadOut = eInOut(seg(t, 12.1, 12.5));
+    head.style.top = lerp(880, 250, pUp) - pHeadOut * 40 + 'px';
+    head.style.transform = `translate(-50%,-50%) scale(${lerp(1, .56, pUp)})`;
+    head.style.opacity = 1 - pHeadOut;
+
+    // 2) 숫자 카운트 업 — 1.5초 간격으로 하나씩
+    D.items.forEach((it, i) => {
+      const s = stats[i], tIn = 2.9 + i * 1.5;
+      const pIn = eOut(seg(t, tIn, tIn + .55));
+      const pCount = eOut4(seg(t, tIn + .2, tIn + 1.5));
+      const pPop = seg(t, tIn + 1.5, tIn + 1.9);
+      const pOut = eInOut(seg(t, 8.6 + i * .08, 9.05 + i * .08));
+      s.el.style.opacity = pIn * (1 - pOut);
+      s.el.style.transform = `translate(${(1 - pIn) * 90}px, ${-pOut * 60}px) scale(${1 + .05 * Math.sin(Math.PI * pPop)})`;
+      s.edge.style.transform = `scaleY(${eOut(seg(t, tIn + .15, tIn + .7))})`;
+      s.num.textContent = fmt(it.v * pCount, it.d);
+      s.num.style.color = pPop > 0 ? A : '#fff';
+    });
+
+    // 3) 막대 그래프
+    const pChartOut = eInOut(seg(t, 12.1, 12.5));
+    chart.style.opacity = (t >= 8.8 ? 1 : 0) * (1 - pChartOut);
+    chart.style.transform = `scale(${1 - .04 * pChartOut})`;
+    base.style.transform = `scaleX(${eInOut(seg(t, 8.8, 9.4))})`;
+    D.items.forEach((it, i) => {
+      const c = cols[i];
+      const pName = eOut(seg(t, 9 + i * .1, 9.5 + i * .1));
+      c.name.style.opacity = pName;
+      c.name.style.transform = `translateY(${(1 - pName) * 24}px)`;
+      const a = 9.2 + i * .25, pGrow = eOut(seg(t, a, a + 1.4));
+      c.fill.style.height = it.h * pGrow + 'px';
+      c.bval.style.bottom = it.h * pGrow + 22 + 'px';
+      c.bval.style.opacity = seg(t, a, a + .3);
+      c.num.textContent = fmt(it.v * pGrow, it.d);
+      const pBest = seg(t, 11, 11.45);
+      c.best.style.display = i === D.bestI ? '' : 'none';
+      c.best.style.bottom = it.h + 22 + it.labelH + 22 + 'px';
+      c.best.style.opacity = pBest > 0 ? 1 : 0;
+      c.best.style.transform = `translateX(-50%) scale(${eBack(pBest)})`;
+    });
+
+    // 4) 마무리
+    const pR1 = eOut(seg(t, 12.4, 13.5)), pR2 = eOut(seg(t, 12.65, 14));
+    ring1.style.opacity = pR1 * .55;
+    ring1.style.transform = `translate(-50%,-50%) scale(${.45 + .55 * pR1})`;
+    ring2.style.opacity = pR2 * .22;
+    ring2.style.transform = `translate(-50%,-50%) scale(${.6 + .65 * pR2})`;
+    outro.style.transform = 'translate(-50%,-50%)';
+    closingWords.forEach((w, i) => {
+      const a = 12.7 + Math.min(i, 10) * .09, p = eOut(seg(t, a, a + .55));
+      w.style.opacity = p; w.style.transform = `translateY(${(1 - p) * 70}px)`;
+    });
+    const pSign = eOut(seg(t, 13.9, 14.4));
+    sign.style.opacity = pSign;
+    sign.style.transform = `translateY(${(1 - pSign) * 24}px)`;
+
+    scrub.value = t;
+    timeEl.textContent = `${t.toFixed(1)} / ${DURATION.toFixed(1)}초`;
+  }
+
+  // ── 무대 크기 맞추기 ──
+  function fit() {
+    const w = viewport.clientWidth, h = viewport.clientHeight;
+    if (!w || !h) return;
+    const s = Math.min(w / 1080, h / 1920);
+    stage.style.transform = `translate(${(w - 1080 * s) / 2}px, ${(h - 1920 * s) / 2}px) scale(${s})`;
+  }
+  new ResizeObserver(fit).observe(viewport);
+
+  // ── 재생 ──
+  const scrub = $('scrub'), timeEl = $('time');
+  let playing = false, startAt = 0;
+  function loop(now) {
+    if (!playing) return;
+    let t = (now - startAt) / 1000;
+    if (t >= DURATION) { t = DURATION; stop(); }
+    render(t);
+    if (playing) requestAnimationFrame(loop);
+  }
+  function play() {
+    playing = true;
+    document.body.classList.add('playing');
+    startAt = performance.now();
+    render(0);
+    requestAnimationFrame(loop);
+  }
+  function stop() { playing = false; document.body.classList.remove('playing'); }
+
+  $('playBtn').addEventListener('click', play);
+  $('miniPlay').addEventListener('click', play);
+  scrub.addEventListener('input', () => { stop(); render(+scrub.value); });
+
+  // ── 입력칸 ──
+  const fTitle = $('fTitle'), fClosing = $('fClosing'), fColor = $('fColor');
+  const rowsEl = $('rows');
+  const rowInputs = state.items.map((it, i) => {
+    const r = document.createElement('div');
+    r.className = 'row';
+    r.innerHTML = `<span class="no">0${i + 1}</span>
+      <input type="text" maxlength="14" placeholder="이름" aria-label="${i + 1}번 이름" data-jump="8.2">
+      <input type="text" class="n" maxlength="16" inputmode="decimal" placeholder="숫자" aria-label="${i + 1}번 숫자" data-jump="8.2">
+      <input type="text" maxlength="5" placeholder="단위" aria-label="${i + 1}번 단위" data-jump="8.2">`;
+    rowsEl.appendChild(r);
+    const [n, v, u] = r.querySelectorAll('input');
+    const upd = () => { state.items[i] = { name: n.value, value: v.value, unit: u.value }; apply(); save(); };
+    [n, v, u].forEach((x) => x.addEventListener('input', upd));
+    return { n, v, u };
+  });
+  const sws = SWATCHES.map((c) => {
+    const b = document.createElement('button');
+    b.className = 'sw'; b.style.background = c; b.title = c; b.setAttribute('aria-label', '강조색 ' + c);
+    b.addEventListener('click', () => setAccent(c));
+    $('colors').insertBefore(b, $('colors').querySelector('.picker'));
+    return b;
+  });
+  function setAccent(c) { state.accent = c.toLowerCase(); syncColorUI(); apply(); save(); }
+  function syncColorUI() {
+    fColor.value = state.accent;
+    $('hex').textContent = state.accent.toUpperCase();
+    sws.forEach((b) => b.classList.toggle('on', b.title === state.accent));
+  }
+  function fillInputs() {
+    fTitle.value = state.title;
+    fClosing.value = state.closing;
+    state.items.forEach((it, i) => { rowInputs[i].n.value = it.name; rowInputs[i].v.value = it.value; rowInputs[i].u.value = it.unit; });
+    syncColorUI();
+  }
+  fTitle.addEventListener('input', () => { state.title = fTitle.value; apply(); save(); });
+  fClosing.addEventListener('input', () => { state.closing = fClosing.value; apply(); save(); });
+  fColor.addEventListener('input', () => setAccent(fColor.value));
+  // 고치는 칸에 해당하는 장면으로 미리보기 이동(재생 중이 아닐 때)
+  document.querySelector('.panel').addEventListener('focusin', (e) => {
+    const j = e.target.dataset && e.target.dataset.jump;
+    if (j && !playing) render(+j);
+  });
+  $('resetBtn').addEventListener('click', () => {
+    if (!confirm('입력값을 예시값으로 되돌릴까요?')) return;
+    state = clone(DEFAULTS); fillInputs(); apply(); save();
+  });
+
+  // ── 미리보기만 크게 보기(녹화용) ──
+  const hasFS = !!document.documentElement.requestFullscreen;
+  let idleTimer = null;
+  function wake() {
+    document.body.classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => document.body.classList.add('idle'), 1800);
+  }
+  function enterBig() {
+    stop();
+    document.body.classList.add('big');
+    fit(); render(0); wake();
+    if (hasFS && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+  }
+  function exitBig() {
+    document.body.classList.remove('big', 'idle');
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    fit(); render(curT);
+  }
+  $('bigBtn').addEventListener('click', enterBig);
+  $('bigPlay').addEventListener('click', (e) => { e.stopPropagation(); play(); });
+  $('bigExit').addEventListener('click', (e) => { e.stopPropagation(); exitBig(); });
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && document.body.classList.contains('big')) exitBig();
+    else fit();
+  });
+  viewport.addEventListener('click', () => { if (document.body.classList.contains('big')) play(); });
+  document.addEventListener('mousemove', () => { if (document.body.classList.contains('big')) wake(); });
+  document.addEventListener('keydown', (e) => {
+    if (!document.body.classList.contains('big')) return;
+    if (e.code === 'Space') { e.preventDefault(); play(); }
+    else if (e.key === 'Escape') exitBig();
+  });
+
+  // ── 렌더 스크립트용(html녹화.mjs) ──
+  window.DURATION = DURATION;
+  window.setT = (t) => {
+    if (!document.body.classList.contains('rec')) { stop(); document.body.classList.add('big', 'rec'); fit(); }
+    render(t);
+  };
+
+  fillInputs();
+  apply();
+  render(8.2);
+  fit();
+  if (document.fonts) document.fonts.ready.then(() => apply());
+</script>
+</body>
+</html>
